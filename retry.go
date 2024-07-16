@@ -19,20 +19,20 @@ const (
 	DefaultRetryLinearInterval = 3 * time.Second
 )
 
-// RetryConfig is config for retry.
-type RetryConfig struct {
-	ctx             context.Context
-	maxRetries      int
-	backoffStrategy BackoffStrategy
-	logFunc         func(format string, args ...interface{})
+// Config holds configuration for retry.
+type Config struct {
+	ctx        context.Context
+	maxRetries int
+	backoff    Backoff
+	logFunc    func(format string, args ...interface{})
 }
 
 // Validate checks if the RetryConfig is properly set up.
-func (c *RetryConfig) Validate() error {
+func (c *Config) Validate() error {
 	if c.maxRetries <= 0 {
 		return errors.New("max retries should be greater than 0")
 	}
-	if c.backoffStrategy == nil {
+	if c.backoff == nil {
 		return errors.New("backoff strategy must be set")
 	}
 	if c.logFunc == nil {
@@ -45,33 +45,33 @@ func (c *RetryConfig) Validate() error {
 type RetryFunc func() error
 
 // Option is a function that sets a RetryConfig option.
-type Option func(*RetryConfig)
+type Option func(*Config)
 
-// RetryTimes sets the times of retry.
-func RetryTimes(maxRetries int) Option {
-	return func(c *RetryConfig) {
+// WithTimes sets the times of retry.
+func WithTimes(maxRetries int) Option {
+	return func(c *Config) {
 		c.maxRetries = maxRetries
 	}
 }
 
-// RetryWithCustomBackoff sets an arbitrary custom backoff strategy.
-func RetryWithCustomBackoff(backoffStrategy BackoffStrategy) Option {
-	return func(c *RetryConfig) {
-		c.backoffStrategy = backoffStrategy
+// WithCustomBackoff sets an arbitrary custom backoff strategy.
+func WithCustomBackoff(backoff Backoff) Option {
+	return func(c *Config) {
+		c.backoff = backoff
 	}
 }
 
-// RetryWithLinearBackoff sets a linear backoff strategy.
-func RetryWithLinearBackoff(interval time.Duration) Option {
-	return func(c *RetryConfig) {
-		c.backoffStrategy = &linear{interval: interval}
+// WithLinearBackoff sets a linear backoff strategy.
+func WithLinearBackoff(interval time.Duration) Option {
+	return func(c *Config) {
+		c.backoff = &linear{interval: interval}
 	}
 }
 
 // RetryWithExponentialBackoff sets an exponential backoff strategy with jitter.
-func RetryWithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duration) Option {
-	return func(c *RetryConfig) {
-		c.backoffStrategy = &exponentialWithJitter{
+func WithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duration) Option {
+	return func(c *Config) {
+		c.backoff = &exponentialWithJitter{
 			interval:    initialInterval,
 			maxInterval: maxInterval,
 			maxJitter:   maxJitter,
@@ -79,22 +79,22 @@ func RetryWithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Du
 	}
 }
 
-// Context sets the retry context.
-func Context(ctx context.Context) Option {
-	return func(c *RetryConfig) {
+// WithContext sets the retry context.
+func WithContext(ctx context.Context) Option {
+	return func(c *Config) {
 		c.ctx = ctx
 	}
 }
 
-// Logger sets the logger function for logging retry attempts.
-func Logger(logFunc func(format string, args ...interface{})) Option {
-	return func(c *RetryConfig) {
+// WithLogger sets the logger function for logging retry attempts.
+func WithLogger(logFunc func(format string, args ...interface{})) Option {
+	return func(c *Config) {
 		c.logFunc = logFunc
 	}
 }
 
 // BackoffStrategy is an interface that defines a method for calculating backoff intervals.
-type BackoffStrategy interface {
+type Backoff interface {
 	CalculateInterval(attempt int) time.Duration
 	Name() string
 }
@@ -141,23 +141,23 @@ func jitter(maxJitter time.Duration) time.Duration {
 	return time.Duration(rand.Int63n(int64(maxJitter)))
 }
 
-// RetryError is returned when the maximum number of retries is exceeded.
-type RetryError struct {
+// Error is returned when the maximum number of retries is exceeded.
+type Error struct {
 	MaxRetries int
 	Errors     []error
 }
 
-func (e *RetryError) Error() string {
+func (e *Error) Error() string {
 	return fmt.Sprintf("max retries (%d) exceeded. Errors: %v", e.MaxRetries, e.Errors)
 }
 
-// Retry executes the retryFunc repeatedly until it is successful or canceled by the context
-func Retry(retryFunc RetryFunc, options ...Option) error {
-	config := &RetryConfig{
-		maxRetries:      DefaultRetryTimes,
-		ctx:             context.Background(),
-		logFunc:         log.Printf,
-		backoffStrategy: &linear{interval: DefaultRetryLinearInterval},
+// Do execute the retryFunc repeatedly until it is successful or canceled by the context
+func Do(retryFunc RetryFunc, options ...Option) error {
+	config := &Config{
+		maxRetries: DefaultRetryTimes,
+		ctx:        context.Background(),
+		logFunc:    log.Printf,
+		backoff:    &linear{interval: DefaultRetryLinearInterval},
 	}
 
 	for _, option := range options {
@@ -182,7 +182,7 @@ func Retry(retryFunc RetryFunc, options ...Option) error {
 			}
 
 			iErrors = append(iErrors, err)
-			interval := config.backoffStrategy.CalculateInterval(attempt)
+			interval := config.backoff.CalculateInterval(attempt)
 
 			config.logFunc("attempt %d/%d for %s failed with error: %v. Retrying in %v...\n",
 				attempt+1, config.maxRetries, funcName, err, interval)
@@ -197,7 +197,7 @@ func Retry(retryFunc RetryFunc, options ...Option) error {
 		}
 	}
 
-	return &RetryError{MaxRetries: config.maxRetries, Errors: iErrors}
+	return &Error{MaxRetries: config.maxRetries, Errors: iErrors}
 }
 
 // getFunctionName returns the name of the function

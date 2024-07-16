@@ -20,7 +20,7 @@ var (
 
 // TestRetryLinearSuccess tests successful retry with linear backoff.
 func TestRetryLinearSuccess(t *testing.T) {
-	err := Retry(successFunc, RetryTimes(3), RetryWithLinearBackoff(1*time.Second))
+	err := Do(successFunc, WithTimes(3), WithLinearBackoff(1*time.Second))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -28,11 +28,11 @@ func TestRetryLinearSuccess(t *testing.T) {
 
 // TestRetryLinearFail tests failed retry with linear backoff.
 func TestRetryLinearFail(t *testing.T) {
-	err := Retry(failFunc, RetryTimes(3), RetryWithLinearBackoff(1*time.Second))
+	err := Do(failFunc, WithTimes(3), WithLinearBackoff(1*time.Second))
 	if err == nil {
 		t.Fatalf("expected an error, got nil")
 	}
-	if retryErr, ok := err.(*RetryError); ok {
+	if retryErr, ok := err.(*Error); ok {
 		if len(retryErr.Errors) != 3 {
 			t.Fatalf("expected 3 errors, got %d", len(retryErr.Errors))
 		}
@@ -43,7 +43,7 @@ func TestRetryLinearFail(t *testing.T) {
 
 // TestRetryExponentialSuccess tests successful retry with exponential backoff
 func TestRetryExponentialSuccess(t *testing.T) {
-	err := Retry(successFunc, RetryTimes(3), RetryWithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
+	err := Do(successFunc, WithTimes(3), WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
@@ -51,11 +51,11 @@ func TestRetryExponentialSuccess(t *testing.T) {
 
 // TestRetryExponentialFail tests failed retry with exponential backoff
 func TestRetryExponentialFail(t *testing.T) {
-	err := Retry(failFunc, RetryTimes(3), RetryWithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
+	err := Do(failFunc, WithTimes(3), WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if retryErr, ok := err.(*RetryError); ok {
+	if retryErr, ok := err.(*Error); ok {
 		if len(retryErr.Errors) != 3 {
 			t.Fatalf("expected 3 retries, got %d", len(retryErr.Errors))
 		}
@@ -68,7 +68,7 @@ func TestRetryExponentialFail(t *testing.T) {
 func TestRetryWithContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := Retry(failFunc, RetryTimes(3), RetryWithLinearBackoff(1*time.Second), Context(ctx))
+	err := Do(failFunc, WithTimes(3), WithLinearBackoff(1*time.Second), WithContext(ctx))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -84,7 +84,7 @@ func TestRetryWithLogger(t *testing.T) {
 		logged = true
 		fmt.Printf(format, args...)
 	}
-	err := Retry(failFunc, RetryTimes(3), RetryWithLinearBackoff(1*time.Second), Logger(logFunc))
+	err := Do(failFunc, WithTimes(3), WithLinearBackoff(1*time.Second), WithLogger(logFunc))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -98,10 +98,10 @@ func TestRetryWithContextDeadlineExceeded(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	err := Retry(func() error {
+	err := Do(func() error {
 		time.Sleep(20 * time.Millisecond) // Ensure the function takes longer than the context timeout
 		return errTest
-	}, RetryTimes(3), RetryWithLinearBackoff(1*time.Millisecond), Context(ctx))
+	}, WithTimes(3), WithLinearBackoff(1*time.Millisecond), WithContext(ctx))
 
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -142,7 +142,7 @@ func TestTryFailure(t *testing.T) {
 
 // TestRetryInvalidConfig tests invalid retry configuration
 func TestRetryInvalidConfig(t *testing.T) {
-	err := Retry(successFunc, RetryTimes(0))
+	err := Do(successFunc, WithTimes(0))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
@@ -166,7 +166,7 @@ func TestRetryBackoffIntervals(t *testing.T) {
 		return errTest
 	}
 
-	_ = Retry(retryFunc, RetryTimes(4), RetryWithExponentialBackoff(1*time.Second, 8*time.Second, 0))
+	_ = Do(retryFunc, WithTimes(4), WithExponentialBackoff(1*time.Second, 8*time.Second, 0))
 
 	expectedIntervals := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
 	for i, interval := range intervals {
@@ -179,11 +179,11 @@ func TestRetryBackoffIntervals(t *testing.T) {
 // TestRetryWithCustomBackoff tests retry with a custom backoff strategy
 func TestRetryWithCustomBackoff(t *testing.T) {
 	customBackoff := &customBackoffStrategy{maxInterval: 5 * time.Second}
-	err := Retry(failFunc, RetryTimes(3), RetryWithCustomBackoff(customBackoff))
+	err := Do(failFunc, WithTimes(3), WithCustomBackoff(customBackoff))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
 	}
-	if retryErr, ok := err.(*RetryError); ok {
+	if retryErr, ok := err.(*Error); ok {
 		if len(retryErr.Errors) != 3 {
 			t.Fatalf("expected 3 errors, got %d", len(retryErr.Errors))
 		}
@@ -201,11 +201,11 @@ func TestRetryConcurrency(t *testing.T) {
 	for i := 0; i < concurrency; i++ {
 		go func() {
 			defer wg.Done()
-			err := Retry(failFunc, RetryTimes(3), RetryWithLinearBackoff(100*time.Millisecond))
+			err := Do(failFunc, WithTimes(3), WithLinearBackoff(100*time.Millisecond))
 			if err == nil {
 				t.Errorf("expected error, got nil")
 			}
-			if _, ok := err.(*RetryError); !ok {
+			if _, ok := err.(*Error); !ok {
 				t.Errorf("expected RetryError, got %v", err)
 			}
 		}()
@@ -217,7 +217,7 @@ func TestRetryConcurrency(t *testing.T) {
 // BenchmarkRetry benchmarks the retry function
 func BenchmarkRetry(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_ = Retry(failFunc, RetryTimes(3), RetryWithLinearBackoff(1*time.Millisecond))
+		_ = Do(failFunc, WithTimes(3), WithLinearBackoff(1*time.Millisecond))
 	}
 }
 
