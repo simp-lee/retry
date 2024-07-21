@@ -1,9 +1,8 @@
 # retry
 
-This package includes a flexible and configurable `Do` function that can be used to automatically retry operations 
-that may fail intermittently. It supports various backoff strategies including linear and exponential backoff with 
-jitter, as well as context cancellation and custom logging. `Try` function is also provided to capture any panic as 
-an error with a stack trace.
+This package includes a flexible and configurable `Do` function that can be used to automatically retry operations
+that may fail intermittently. It supports various backoff strategies including linear, exponential backoff with
+jitter, random interval backoff, as well as context cancellation and custom logging.
 
 ## Installation
 
@@ -69,6 +68,12 @@ err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time
 // Retry with exponential backoff, starting at 1 second, doubling each time, up to 10 seconds, with up to 500ms of jitter
 err := retry.Do(someFunction, retry.WithTimes(5), retry.WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
 ```
+- Random Interval Backoff
+
+```go
+// Retry with random interval backoff, waiting between 1 and 3 seconds between each attempt
+err := retry.Do(someFunction, retry.WithTimes(5), retry.WithRandomIntervalBackoff(1*time.Second, 3*time.Second))
+```
 
 - Custom Backoff Strategy
 
@@ -128,21 +133,6 @@ err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time
 - Use context for timeouts to ensure your retries don't run indefinitely.
 - Be mindful of the impact of retries on the system you're interacting with. Excessive retries can sometimes exacerbate problems.
 - Use custom logging to monitor and debug retry behavior.
-
-### Try Function
-
-The `Try` function is used to execute a function and capture any panic as an error with a stack trace:
-
-```go
-err := retry.Try(func() { 
-	// Your code that might panic
-	panic("Something went wrong")
-})
-if err != nil {
-	fmt.Printf("Operation failed: %v\n", err)
-	// The error will include the panic message and a stack trace
-}
-```
 
 ## Contributing
 

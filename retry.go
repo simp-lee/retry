@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"reflect"
 	"runtime"
-	"runtime/debug"
 	"strings"
 	"time"
 )
@@ -79,6 +78,16 @@ func WithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duratio
 	}
 }
 
+// WithRandomIntervalBackoff sets a random backoff strategy within the given interval range.
+func WithRandomIntervalBackoff(minInterval, maxInterval time.Duration) Option {
+	return func(c *Config) {
+		c.backoff = &randomInterval{
+			minInterval: minInterval,
+			maxInterval: maxInterval,
+		}
+	}
+}
+
 // WithContext sets the retry context.
 func WithContext(ctx context.Context) Option {
 	return func(c *Config) {
@@ -131,6 +140,21 @@ func (e *exponentialWithJitter) CalculateInterval(attempt int) time.Duration {
 
 func (e *exponentialWithJitter) Name() string {
 	return "ExponentialWithJitter"
+}
+
+// randomInterval implements the BackoffStrategy interface using a random backoff strategy within a given interval.
+type randomInterval struct {
+	minInterval time.Duration
+	maxInterval time.Duration
+}
+
+// CalculateInterval calculates the next backoff interval as a random duration within the minInterval and maxInterval range.
+func (r *randomInterval) CalculateInterval(_ int) time.Duration {
+	return time.Duration(rand.Int63n(int64(r.maxInterval-r.minInterval))) + r.minInterval
+}
+
+func (r *randomInterval) Name() string {
+	return "RandomInterval"
 }
 
 // Jitter adds a random duration, up to maxJitter, to the current interval to introduce randomness
@@ -205,15 +229,4 @@ func getFunctionName(i interface{}) string {
 	funcPath := runtime.FuncForPC(reflect.ValueOf(i).Pointer()).Name()
 	lastSlash := strings.LastIndex(funcPath, "/")
 	return funcPath[lastSlash+1:]
-}
-
-// Try executes a function and returns an error if it fails, including a stack trace
-func Try(fn func()) (err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			err = fmt.Errorf("operation failed: %v, stack trace: %s", r, string(debug.Stack()))
-		}
-	}()
-	fn()
-	return nil
 }

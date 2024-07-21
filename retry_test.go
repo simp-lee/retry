@@ -112,34 +112,6 @@ func TestRetryWithContextDeadlineExceeded(t *testing.T) {
 	}
 }
 
-// TestTrySuccess tests that Try returns nil when the function succeeds.
-func TestTrySuccess(t *testing.T) {
-	err := Try(func() {
-		// Do nothing
-	})
-
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-}
-
-// TestTryFailure tests that Try captures panic and returns it as an error.
-func TestTryFailure(t *testing.T) {
-	err := Try(func() { panic(errTest) })
-	if err == nil {
-		t.Fatalf("expected error, got nil")
-	}
-	expected := fmt.Sprintf("operation failed: %v", errTest)
-
-	if !strings.Contains(err.Error(), expected) {
-		t.Fatalf("expected error to contain %q, got %v", expected, err)
-	}
-
-	if !strings.Contains(err.Error(), "stack trace:") {
-		t.Fatalf("expected error to contain stack trace, got %v", err)
-	}
-}
-
 // TestRetryInvalidConfig tests invalid retry configuration
 func TestRetryInvalidConfig(t *testing.T) {
 	err := Do(successFunc, WithTimes(0))
@@ -232,4 +204,54 @@ func (c *customBackoffStrategy) CalculateInterval(attempt int) time.Duration {
 
 func (c *customBackoffStrategy) Name() string {
 	return "Custom"
+}
+
+// TestRetryRandomIntervalSuccess tests successful retry with random interval backoff.
+func TestRetryRandomIntervalSuccess(t *testing.T) {
+	err := Do(successFunc, WithTimes(3), WithRandomIntervalBackoff(1*time.Second, 3*time.Second))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+// TestRetryRandomIntervalFail tests failed retry with random interval backoff.
+func TestRetryRandomIntervalFail(t *testing.T) {
+	err := Do(failFunc, WithTimes(3), WithRandomIntervalBackoff(1*time.Second, 3*time.Second))
+	if err == nil {
+		t.Fatalf("expected an error, got nil")
+	}
+	if retryErr, ok := err.(*Error); ok {
+		if len(retryErr.Errors) != 3 {
+			t.Fatalf("expected 3 errors, got %d", len(retryErr.Errors))
+		}
+	} else {
+		t.Fatalf("expected RetryError, got %v", err)
+	}
+}
+
+// TestRetryRandomIntervalBackoffIntervals tests that the random interval backoff intervals are within the expected range.
+func TestRetryRandomIntervalBackoffIntervals(t *testing.T) {
+	attempts := 0
+	startTime := time.Now()
+	var intervals []time.Duration
+	minInterval := 1 * time.Second
+	maxInterval := 3 * time.Second
+	tolerance := 100 * time.Millisecond // Add tolerance for timing inaccuracies
+
+	retryFunc := func() error {
+		if attempts > 0 {
+			intervals = append(intervals, time.Since(startTime))
+		}
+		startTime = time.Now()
+		attempts++
+		return errTest
+	}
+
+	_ = Do(retryFunc, WithTimes(4), WithRandomIntervalBackoff(minInterval, maxInterval))
+
+	for _, interval := range intervals {
+		if interval < minInterval || interval > maxInterval+tolerance {
+			t.Errorf("Expected interval between %v and %v, got %v", minInterval, maxInterval+tolerance, interval)
+		}
+	}
 }
