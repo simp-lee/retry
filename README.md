@@ -1,12 +1,35 @@
 # retry
 
-This package includes a flexible and configurable `Do` function that can be used to automatically retry operations
-that may fail intermittently. It supports various backoff strategies including linear, exponential backoff with
-jitter, random interval backoff, as well as context cancellation and custom logging.
+A flexible and configurable Go package for automatically retrying operations that may fail intermittently.
+
+## Table of Contents
+- [Features](#features)
+- [Installation](#installation)
+- [Usage](#usage)
+	- [Basic Usage](#basic-usage)
+	- [Backoff Strategies](#backoff-strategies)
+	- [Context Cancellation](#context-cancellation)
+	- [Custom Logging](#custom-logging)
+- [API Reference](#api-reference)
+- [Best Practices](#best-practices)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Features
+
+- Supports various backoff strategies:
+	- Linear
+	- Constant
+	- Exponential with jitter
+	- Random interval
+    - Custom backoff strategy
+- Context cancellation support
+- Custom logging capabilities
+- Configurable through functional options
 
 ## Installation
 
-To install the `retry` package, run the following command:
+To install the `retry` package, run:
 
 ```bash
 go get github.com/simp-lee/retry
@@ -14,125 +37,140 @@ go get github.com/simp-lee/retry
 
 ## Usage
 
-### Do Function
-
-The `Do` function executes a function repeatedly until it succeeds or the maximum number of retries is reached. It 
-supports various backoff strategies and can be customized with options.
-
-**Basic Usage**
+### Basic Usage
 
 ```go
 package main
 
 import (
-	"fmt"
-	"time"
-	"github.com/simp-lee/retry"
+    "fmt"
+    "time"
+    "github.com/simp-lee/retry"
 )
 
 func main() {
-	// Retry the operation up to 5 times with a 2-second linear backoff
-	err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time.Second))
-	if err != nil {
-		// Handle the error, which could be a retry.Error
-		if retryErr, ok := err.(*retry.Error); ok {
-			fmt.Printf("Operation failed after %d attempts. Errors: %v\n", retryErr.MaxRetries, retryErr.Errors)
-		} else {
-			fmt.Printf("Operation failed: %v\n", err)
-		}
-	} else {
-		fmt.Println("Operation succeeded")
-	}
+    // Retry the operation up to 5 times with a 2-second linear backoff
+    err := retry.Do(someFunction, 
+        retry.WithTimes(5), 
+        retry.WithLinearBackoff(2*time.Second))
+    if err != nil {
+        if retryErr, ok := err.(*retry.Error); ok {
+            fmt.Printf("Operation failed after %d attempts. Errors: %v\n", retryErr.MaxRetries, retryErr.Errors)
+        } else {
+            fmt.Printf("Operation failed: %v\n", err)
+        }
+    } else {
+        fmt.Println("Operation succeeded")
+    }
 }
 
 func someFunction() error {
-	// Your operation that might fail
-	return nil
+    // Your operation that might fail
+    return nil
 }
 ```
 
-**Configuring Backoff Strategies**
+### Backoff Strategies
 
-You can configure different backoff strategies using the provided options:
-
-- Linear Backoff
+#### Linear Backoff
 
 ```go
-// Retry with linear backoff, waiting 2 seconds between each attempt
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time.Second))
+retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time.Second))
+// Retry intervals: 2s, 4s, 6s, 8s, 10s
 ```
 
-- Exponential Backoff with Jitter
+#### Constant Backoff
 
 ```go
-// Retry with exponential backoff, starting at 1 second, doubling each time, up to 10 seconds, with up to 500ms of jitter
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
+retry.Do(someFunction, retry.WithTimes(5), retry.WithConstantBackoff(2*time.Second))
+// Retry intervals: 2s, 2s, 2s, 2s, 2s
 ```
-- Random Interval Backoff
+
+#### Exponential Backoff with Jitter
 
 ```go
-// Retry with random interval backoff, waiting between 1 and 3 seconds between each attempt
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithRandomIntervalBackoff(1*time.Second, 3*time.Second))
+retry.Do(someFunction, retry.WithTimes(4), retry.WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
+// Retry intervals: 1s (+jitter), 2s (+jitter), 4s (+jitter), 8s (+jitter)
 ```
 
-- Custom Backoff Strategy
+#### Random Interval Backoff
 
-To implement a custom backoff strategy, you need to define a struct that implements the `Backoff` interface:
+```go
+retry.Do(someFunction, retry.WithTimes(5), retry.WithRandomIntervalBackoff(1*time.Second, 3*time.Second))
+// Retry intervals: random values between 1s and 3s
+```
+
+#### Custom Backoff Strategy
 
 ```go
 type CustomBackoffStrategy struct {
-	MaxInterval time.Duration
+    MaxInterval time.Duration
 }
 
 func (c *CustomBackoffStrategy) CalculateInterval(attempt int) time.Duration {
-	// Your custom logic to calculate the interval
-	return time.Duration(attempt) * time.Second
+    interval := time.Duration(attempt) * time.Second
+    if interval > c.MaxInterval {
+        return c.MaxInterval
+    }
+    return interval
 }
 
 func (c *CustomBackoffStrategy) Name() string {
-	return "Custom"
+    return "Custom"
 }
 
-// Usage
 customBackoff := &CustomBackoff{
-	MaxInterval: 5 * time.Second,
+    MaxInterval: 5 * time.Second,
 }
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithCustomBackoff(customBackoff))
+retry.Do(someFunction, retry.WithTimes(5), retry.WithCustomBackoff(customBackoff))
+// Retry intervals: 1s, 2s, 3s, 4s, 5s
 ```
 
-**Context Cancellation**
-
-You can provide a context to cancel the retry operation:
+### Context Cancellation
 
 ```go
 ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 defer cancel()
 
-// The retry operation will be cancelled if it takes longer than 10 seconds
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time.Second), retry.WithContext(ctx))
+err := retry.Do(someFunction, 
+    retry.WithTimes(5), 
+    retry.WithLinearBackoff(2*time.Second), 
+    retry.WithContext(ctx))
 ```
 
-**Custom Logging**
-
-You can provide a custom logger to log the retry attempts:
+### Custom Logging
 
 ```go
 logFunc := func(format string, args ...interface{}) {
-	fmt.Printf(format, args...)
+    slog.Warn(fmt.Sprintf(format, args...))
 }
 
-// Use a custom logging function to log retry attempts
-err := retry.Do(someFunction, retry.WithTimes(5), retry.WithLinearBackoff(2*time.Second), retry.WithLogger(logFunc))
+err := retry.Do(someFunction,
+    retry.WithTimes(5),
+    retry.WithConstantBackoff(2*time.Second),
+    retry.WithLogger(logFunc))
 ```
 
-**Best Practices**
+## API Reference
 
-- Use retries for transient failures, not for business logic errors.
-- Choose appropriate retry counts and backoff strategies based on your specific use case.
-- Always set a maximum retry time or count to prevent infinite loops.
-- Use context for timeouts to ensure your retries don't run indefinitely.
-- Be mindful of the impact of retries on the system you're interacting with. Excessive retries can sometimes exacerbate problems.
-- Use custom logging to monitor and debug retry behavior.
+- `retry.Do(retryFunc RetryFunc, options ...Option) error`
+- `retry.WithTimes(maxRetries int) Option`
+- `retry.WithLinearBackoff(interval time.Duration) Option`
+- `retry.WithConstantBackoff(interval time.Duration) Option`
+- `retry.WithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duration) Option`
+- `retry.WithRandomIntervalBackoff(minInterval, maxInterval time.Duration) Option`
+- `retry.WithCustomBackoff(backoff Backoff) Option`
+- `retry.WithContext(ctx context.Context) Option`
+- `retry.WithLogger(logFunc func(format string, args ...interface{})) Option`
+
+## Best Practices
+
+1. Use retries for transient failures, not for business logic errors.
+2. Choose appropriate retry counts and backoff strategies based on your specific use case.
+3. Always set a maximum retry time or count to prevent infinite loops.
+4. Use context for timeouts to ensure your retries don't run indefinitely.
+5. Be mindful of the impact of retries on the system you're interacting with.
+6. Use custom logging to monitor and debug retry behavior.
 
 ## Contributing
 

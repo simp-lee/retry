@@ -41,6 +41,29 @@ func TestRetryLinearFail(t *testing.T) {
 	}
 }
 
+// TestRetryConstantSuccess tests successful retry with constant backoff.
+func TestRetryConstantSuccess(t *testing.T) {
+	err := Do(successFunc, WithTimes(3), WithConstantBackoff(1*time.Second))
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+}
+
+// TestRetryConstantFail tests failed retry with constant backoff.
+func TestRetryConstantFail(t *testing.T) {
+	err := Do(failFunc, WithTimes(3), WithConstantBackoff(1*time.Second))
+	if err == nil {
+		t.Fatalf("expected an error, got nil")
+	}
+	if retryErr, ok := err.(*Error); ok {
+		if len(retryErr.Errors) != 3 {
+			t.Fatalf("expected 3 errors, got %d", len(retryErr.Errors))
+		}
+	} else {
+		t.Fatalf("expected RetryError, got %v", err)
+	}
+}
+
 // TestRetryExponentialSuccess tests successful retry with exponential backoff
 func TestRetryExponentialSuccess(t *testing.T) {
 	err := Do(successFunc, WithTimes(3), WithExponentialBackoff(1*time.Second, 10*time.Second, 500*time.Millisecond))
@@ -150,7 +173,7 @@ func TestRetryBackoffIntervals(t *testing.T) {
 
 // TestRetryWithCustomBackoff tests retry with a custom backoff strategy
 func TestRetryWithCustomBackoff(t *testing.T) {
-	customBackoff := &customBackoffStrategy{maxInterval: 5 * time.Second}
+	customBackoff := &customBackoffStrategy{}
 	err := Do(failFunc, WithTimes(3), WithCustomBackoff(customBackoff))
 	if err == nil {
 		t.Fatalf("expected error, got nil")
@@ -194,12 +217,10 @@ func BenchmarkRetry(b *testing.B) {
 }
 
 // customBackoffStrategy is a custom implementation of BackoffStrategy
-type customBackoffStrategy struct {
-	maxInterval time.Duration
-}
+type customBackoffStrategy struct{}
 
 func (c *customBackoffStrategy) CalculateInterval(attempt int) time.Duration {
-	return time.Duration(attempt) * time.Second
+	return time.Duration(attempt+1) * time.Second
 }
 
 func (c *customBackoffStrategy) Name() string {
@@ -252,6 +273,81 @@ func TestRetryRandomIntervalBackoffIntervals(t *testing.T) {
 	for _, interval := range intervals {
 		if interval < minInterval || interval > maxInterval+tolerance {
 			t.Errorf("Expected interval between %v and %v, got %v", minInterval, maxInterval+tolerance, interval)
+		}
+	}
+}
+
+// TestLinearBackoffIntervals tests that the linear backoff intervals are correct
+func TestLinearBackoffIntervals(t *testing.T) {
+	attempts := 0
+	startTime := time.Now()
+	var intervals []time.Duration
+
+	retryFunc := func() error {
+		if attempts > 0 {
+			intervals = append(intervals, time.Since(startTime))
+		}
+		startTime = time.Now()
+		attempts++
+		return errTest
+	}
+
+	_ = Do(retryFunc, WithTimes(4), WithLinearBackoff(1*time.Second))
+
+	expectedIntervals := []time.Duration{1 * time.Second, 2 * time.Second, 3 * time.Second}
+	for i, interval := range intervals {
+		if math.Abs(float64(interval-expectedIntervals[i])) > float64(100*time.Millisecond) {
+			t.Errorf("Expected interval %v, got %v", expectedIntervals[i], interval)
+		}
+	}
+}
+
+// TestConstantBackoffIntervals tests that the constant backoff intervals are correct
+func TestConstantBackoffIntervals(t *testing.T) {
+	attempts := 0
+	startTime := time.Now()
+	var intervals []time.Duration
+
+	retryFunc := func() error {
+		if attempts > 0 {
+			intervals = append(intervals, time.Since(startTime))
+		}
+		startTime = time.Now()
+		attempts++
+		return errTest
+	}
+
+	_ = Do(retryFunc, WithTimes(4), WithConstantBackoff(1*time.Second))
+
+	expectedIntervals := []time.Duration{1 * time.Second, 1 * time.Second, 1 * time.Second}
+	for i, interval := range intervals {
+		if math.Abs(float64(interval-expectedIntervals[i])) > float64(100*time.Millisecond) {
+			t.Errorf("Expected interval %v, got %v", expectedIntervals[i], interval)
+		}
+	}
+}
+
+// TestExponentialBackoffIntervals tests that the exponential backoff intervals are correct
+func TestExponentialBackoffIntervals(t *testing.T) {
+	attempts := 0
+	startTime := time.Now()
+	var intervals []time.Duration
+
+	retryFunc := func() error {
+		if attempts > 0 {
+			intervals = append(intervals, time.Since(startTime))
+		}
+		startTime = time.Now()
+		attempts++
+		return errTest
+	}
+
+	_ = Do(retryFunc, WithTimes(4), WithExponentialBackoff(1*time.Second, 8*time.Second, 0))
+
+	expectedIntervals := []time.Duration{1 * time.Second, 2 * time.Second, 4 * time.Second}
+	for i, interval := range intervals {
+		if math.Abs(float64(interval-expectedIntervals[i])) > float64(100*time.Millisecond) {
+			t.Errorf("Expected interval %v, got %v", expectedIntervals[i], interval)
 		}
 	}
 }

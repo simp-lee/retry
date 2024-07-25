@@ -88,6 +88,13 @@ func WithRandomIntervalBackoff(minInterval, maxInterval time.Duration) Option {
 	}
 }
 
+// WithConstantBackoff sets a constant backoff strategy.
+func WithConstantBackoff(interval time.Duration) Option {
+	return func(c *Config) {
+		c.backoff = &constant{interval: interval}
+	}
+}
+
 // WithContext sets the retry context.
 func WithContext(ctx context.Context) Option {
 	return func(c *Config) {
@@ -113,13 +120,27 @@ type linear struct {
 	interval time.Duration
 }
 
-// CalculateInterval calculates the next interval returns a constant.
-func (l *linear) CalculateInterval(_ int) time.Duration {
-	return l.interval
+// CalculateInterval calculates the next interval based on the attempt number.
+func (l *linear) CalculateInterval(attempt int) time.Duration {
+	return time.Duration(attempt+1) * l.interval
 }
 
 func (l *linear) Name() string {
 	return "Linear"
+}
+
+// constant implements the BackoffStrategy interface using a constant backoff strategy.
+type constant struct {
+	interval time.Duration
+}
+
+// CalculateInterval calculates the next interval returns a constant.
+func (c *constant) CalculateInterval(_ int) time.Duration {
+	return c.interval
+}
+
+func (c *constant) Name() string {
+	return "Constant"
 }
 
 // exponentialWithJitter implements the BackoffStrategy interface using an exponential backoff strategy with jitter.
