@@ -6,10 +6,14 @@ A flexible and configurable Go package for automatically retrying operations tha
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
-	- [Basic Usage](#basic-usage)
-	- [Backoff Strategies](#backoff-strategies)
-	- [Context Cancellation](#context-cancellation)
-	- [Custom Logging](#custom-logging)
+  - [Basic Usage](#basic-usage)
+  - [With Results](#with-results)
+  - [Backoff Strategies](#backoff-strategies)
+  - [Context Cancellation](#context-cancellation)
+  - [Custom Logging](#custom-logging)
+  - [Conditional Retries](#conditional-retries)
+  - [Error Wrapping](#error-wrapping)
+  - [Error Handling](#error-handling)
 - [API Reference](#api-reference)
 - [Best Practices](#best-practices)
 - [Contributing](#contributing)
@@ -18,14 +22,18 @@ A flexible and configurable Go package for automatically retrying operations tha
 ## Features
 
 - Supports various backoff strategies:
-	- Linear
-	- Constant
-	- Exponential with jitter
-	- Random interval
-    - Custom backoff strategy
+  - Linear
+  - Constant
+  - Exponential with jitter
+  - Random interval
+  - Custom backoff strategy
+- Generic result handling with `DoWithResult`
 - Context cancellation support
 - Custom logging capabilities
+- Conditional retries based on error types
 - Configurable through functional options
+- Comprehensive error handling with standard errors package integration
+- Error wrapping with attempt information
 
 ## Installation
 
@@ -70,6 +78,23 @@ func someFunction() error {
 }
 ```
 
+### With Results
+
+For functions that return both a value and an error, use `DoWithResult`. This function uses Go 1.18+ generics to provide type-safe handling of any return type:
+
+```go
+result, err := retry.DoWithResult(func() (string, error) {
+    // Function that returns a string result and possibly an error
+    return "success", nil
+}, retry.WithTimes(3))
+
+if err != nil {
+    fmt.Printf("Operation failed: %v\n", err)
+} else {
+    fmt.Printf("Operation succeeded with result: %s\n", result)
+}
+```
+
 ### Backoff Strategies
 
 #### Linear Backoff
@@ -108,7 +133,7 @@ type CustomBackoffStrategy struct {
 }
 
 func (c *CustomBackoffStrategy) CalculateInterval(attempt int) time.Duration {
-    interval := time.Duration(attempt) * time.Second
+    interval := time.Duration(attempt * attempt) * time.Second // quadratic backoff
     if interval > c.MaxInterval {
         return c.MaxInterval
     }
@@ -119,11 +144,11 @@ func (c *CustomBackoffStrategy) Name() string {
     return "Custom"
 }
 
-customBackoff := &CustomBackoff{
-    MaxInterval: 5 * time.Second,
+customBackoff := &CustomBackoffStrategy{
+    MaxInterval: 10 * time.Second,
 }
 retry.Do(someFunction, retry.WithTimes(5), retry.WithCustomBackoff(customBackoff))
-// Retry intervals: 1s, 2s, 3s, 4s, 5s
+// Retry intervals: 0s, 1s, 4s, 9s, 10s (quadratic growth with cap)
 ```
 
 ### Context Cancellation
@@ -151,17 +176,99 @@ err := retry.Do(someFunction,
     retry.WithLogger(logFunc))
 ```
 
+### Conditional Retries
+
+Retry only when specific errors occur:
+
+```go
+// Only retry on network errors, not on validation errors
+condition := func(err error) bool {
+    var netErr *net.OpError
+    return errors.As(err, &netErr)
+}
+
+err := retry.Do(someFunction,
+    retry.WithTimes(5),
+    retry.WithConstantBackoff(2*time.Second),
+    retry.WithRetryCondition(condition))
+```
+
+### Error Wrapping
+
+Add attempt information to errors:
+
+```go
+err := retry.Do(someFunction,
+    retry.WithTimes(3),
+    retry.WithConstantBackoff(1*time.Second),
+    retry.WithErrorWrapping(true))
+
+// Errors will be wrapped as: "attempt 1 failed: original error"
+```
+
+### Error Handling
+
+The package provides robust error handling with standard library compatibility:
+
+```go
+err := retry.Do(someFunction)
+
+if err != nil {
+    if retry.IsRetryError(err) {
+        fmt.Printf("All %d retry attempts failed\n", retry.GetAttemptsCount(err))
+        
+        // Get all errors from retry attempts
+        allErrors := retry.GetRetryErrors(err)
+        fmt.Printf("Errors encountered: %d\n", len(allErrors))
+        
+        // Check for specific error types
+        if errors.Is(err, io.EOF) {
+            fmt.Println("One of the retry attempts encountered EOF")
+        }
+        
+        // Handle network errors differently
+        var netErr *net.OpError
+        if errors.As(err, &netErr) {
+            fmt.Printf("Network error occurred: %v\n", netErr.Err)
+        }
+    } else if errors.Is(err, context.Canceled) {
+        fmt.Println("Retry was canceled")
+    } else if errors.Is(err, context.DeadlineExceeded) {
+        fmt.Println("Retry timed out")
+    } else {
+        fmt.Printf("Other error occurred: %v\n", err)
+    }
+    return
+}
+
+fmt.Println("Operation succeeded")
+```
+
 ## API Reference
 
-- `retry.Do(retryFunc RetryFunc, options ...Option) error`
-- `retry.WithTimes(maxRetries int) Option`
-- `retry.WithLinearBackoff(interval time.Duration) Option`
-- `retry.WithConstantBackoff(interval time.Duration) Option`
-- `retry.WithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duration) Option`
-- `retry.WithRandomIntervalBackoff(minInterval, maxInterval time.Duration) Option`
-- `retry.WithCustomBackoff(backoff Backoff) Option`
-- `retry.WithContext(ctx context.Context) Option`
-- `retry.WithLogger(logFunc func(format string, args ...interface{})) Option`
+### Core Functions
+
+- `retry.Do(retryFunc RetryFunc, options ...Option) error` - Execute a function with retries
+- `retry.DoWithResult[T any](retryFunc func() (T, error), options ...Option) (T, error)` - Execute a function that returns a value and handle retries
+
+### Configuration Options
+
+- `retry.WithTimes(maxRetries int) Option` - Set maximum number of retry attempts
+- `retry.WithLinearBackoff(interval time.Duration) Option` - Use linear backoff strategy
+- `retry.WithConstantBackoff(interval time.Duration) Option` - Use constant backoff strategy
+- `retry.WithExponentialBackoff(initialInterval, maxInterval, maxJitter time.Duration) Option` - Use exponential backoff with jitter
+- `retry.WithRandomIntervalBackoff(minInterval, maxInterval time.Duration) Option` - Use random interval backoff
+- `retry.WithCustomBackoff(backoff Backoff) Option` - Use a custom backoff strategy
+- `retry.WithContext(ctx context.Context) Option` - Set context for cancellation
+- `retry.WithLogger(logFunc func(format string, args ...interface{})) Option` - Set custom logger
+- `retry.WithRetryCondition(condition RetryConditionFunc) Option` - Set condition for selective retries
+- `retry.WithErrorWrapping(wrap bool) Option` - Enable/disable error wrapping with attempt information
+
+### Error Handling Functions
+
+- `retry.IsRetryError(err error) bool` - Check if an error is a retry error
+- `retry.GetAttemptsCount(err error) int` - Get the number of attempts made
+- `retry.GetRetryErrors(err error) []error` - Get all errors from retry attempts
 
 ## Best Practices
 
@@ -171,6 +278,10 @@ err := retry.Do(someFunction,
 4. Use context for timeouts to ensure your retries don't run indefinitely.
 5. Be mindful of the impact of retries on the system you're interacting with.
 6. Use custom logging to monitor and debug retry behavior.
+7. For APIs or remote services, consider using exponential backoff with jitter to prevent thundering herd problems.
+8. Use conditional retries to avoid retrying on permanent errors.
+9. When dealing with specific error types, use `errors.Is` and `errors.As` with retry errors to check for specific error conditions.
+10. Monitor the retry count and duration to identify frequent failures that might need broader system investigation.
 
 ## Contributing
 

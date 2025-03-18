@@ -87,7 +87,7 @@ func TestRetryExponentialFail(t *testing.T) {
 	}
 }
 
-// TestRetryContextCancel tests retry with context cancellation.
+// TestRetryWithContextCancel tests retry with context cancellation.
 func TestRetryWithContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -349,5 +349,255 @@ func TestExponentialBackoffIntervals(t *testing.T) {
 		if math.Abs(float64(interval-expectedIntervals[i])) > float64(100*time.Millisecond) {
 			t.Errorf("Expected interval %v, got %v", expectedIntervals[i], interval)
 		}
+	}
+}
+
+// Below are additional tests for new features
+
+// TestRetryWithRetryCondition tests the conditional retry functionality
+func TestRetryWithRetryCondition(t *testing.T) {
+	// Custom error types for testing
+	var errRetryable = errors.New("retryable error")
+	var errNonRetryable = errors.New("non-retryable error")
+
+	retryCount := 0
+	retryFunc := func() error {
+		retryCount++
+		if retryCount == 1 {
+			return errRetryable // First attempt - return retryable error
+		} else {
+			return errNonRetryable // Second attempt - return non-retryable error
+		}
+	}
+
+	// Only retry on errRetryable
+	retryCondition := func(err error) bool {
+		return errors.Is(err, errRetryable)
+	}
+
+	err := Do(retryFunc, WithTimes(3), WithConstantBackoff(1*time.Millisecond),
+		WithRetryCondition(retryCondition))
+
+	// Should stop after second attempt with errNonRetryable
+	if err == nil {
+		t.Fatalf("expected an error, got nil")
+	}
+
+	if !errors.Is(err, errNonRetryable) {
+		t.Fatalf("expected errNonRetryable, got %v", err)
+	}
+
+	if retryCount != 2 {
+		t.Fatalf("expected 2 attempts, got %d", retryCount)
+	}
+}
+
+// TestRetryWithErrorWrapping tests error wrapping functionality
+func TestRetryWithErrorWrapping(t *testing.T) {
+	baseErr := errors.New("original error")
+
+	err := Do(
+		func() error { return baseErr },
+		WithTimes(2),
+		WithConstantBackoff(1*time.Millisecond),
+		WithErrorWrapping(true),
+	)
+
+	if err == nil {
+		t.Fatalf("expected an error, got nil")
+	}
+
+	// Test that our error is wrapped but still identifiable with errors.Is
+	if !errors.Is(err, baseErr) {
+		t.Errorf("expected errors.Is to find baseErr in wrapped error chain")
+	}
+
+	// Check that error message contains "attempt" indicating it was wrapped
+	retryErrs := GetRetryErrors(err)
+	if len(retryErrs) == 0 {
+		t.Fatalf("expected retry errors, got none")
+	}
+
+	if !strings.Contains(retryErrs[0].Error(), "attempt 1 failed") {
+		t.Errorf("expected wrapped error message with attempt info, got: %v", retryErrs[0])
+	}
+}
+
+// TestGetAttemptsCount tests the GetAttemptsCount helper function
+func TestGetAttemptsCount(t *testing.T) {
+	attempts := 0
+	err := Do(
+		func() error {
+			attempts++
+			return errors.New("test error")
+		},
+		WithTimes(3),
+		WithConstantBackoff(1*time.Millisecond),
+	)
+
+	count := GetAttemptsCount(err)
+	if count != 3 {
+		t.Errorf("expected GetAttemptsCount to return 3, got %d", count)
+	}
+
+	// Test with non-retry error
+	count = GetAttemptsCount(errors.New("regular error"))
+	if count != 0 {
+		t.Errorf("expected GetAttemptsCount to return 0 for non-retry error, got %d", count)
+	}
+}
+
+// TestGetRetryErrors tests the GetRetryErrors helper function
+func TestGetRetryErrors(t *testing.T) {
+	err := Do(
+		func() error { return errors.New("test error") },
+		WithTimes(3),
+		WithConstantBackoff(1*time.Millisecond),
+	)
+
+	retryErrors := GetRetryErrors(err)
+	if len(retryErrors) != 3 {
+		t.Errorf("expected 3 retry errors, got %d", len(retryErrors))
+	}
+
+	// Test with non-retry error
+	retryErrors = GetRetryErrors(errors.New("regular error"))
+	if retryErrors != nil {
+		t.Errorf("expected nil for non-retry error, got %v", retryErrors)
+	}
+}
+
+// TestIsRetryError tests the IsRetryError helper function
+func TestIsRetryError(t *testing.T) {
+	err := Do(
+		func() error { return errors.New("test error") },
+		WithTimes(1),
+		WithConstantBackoff(1*time.Millisecond),
+	)
+
+	if !IsRetryError(err) {
+		t.Errorf("expected IsRetryError to return true")
+	}
+
+	// Test with non-retry error
+	if IsRetryError(errors.New("regular error")) {
+		t.Errorf("expected IsRetryError to return false for non-retry error")
+	}
+}
+
+// TestDoWithResult tests the DoWithResult function with success and failure cases
+func TestDoWithResult(t *testing.T) {
+	// Test successful case
+	result, err := DoWithResult(
+		func() (string, error) {
+			return "success", nil
+		},
+		WithTimes(3),
+	)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+
+	if result != "success" {
+		t.Errorf("expected result 'success', got '%s'", result)
+	}
+
+	// Test failure case
+	result, err = DoWithResult(
+		func() (string, error) {
+			return "failure", errors.New("test error")
+		},
+		WithTimes(2),
+	)
+
+	if err == nil {
+		t.Errorf("expected error, got nil")
+	}
+
+	if result != "" {
+		t.Errorf("expected empty result on failure, got '%s'", result)
+	}
+}
+
+// TestErrorUnwrap tests the Unwrap method of Error
+func TestErrorUnwrap(t *testing.T) {
+	originalErr := errors.New("original error")
+
+	err := Do(
+		func() error { return originalErr },
+		WithTimes(1),
+		WithConstantBackoff(1*time.Millisecond),
+	)
+
+	if !errors.Is(err, originalErr) {
+		t.Errorf("expected errors.Is to find original error")
+	}
+
+	unwrappedErr := errors.Unwrap(err)
+	if !errors.Is(unwrappedErr, originalErr) {
+		t.Errorf("expected Unwrap to return original error")
+	}
+}
+
+// Define a custom error type
+type CustomError struct {
+	Code int
+	Msg  string
+}
+
+// Error implements the error interface for CustomError
+func (e *CustomError) Error() string {
+	return fmt.Sprintf("custom error %d: %s", e.Code, e.Msg)
+}
+
+// TestErrorWithCustomType tests error handling with custom error types
+func TestErrorWithCustomType(t *testing.T) {
+	customErr := &CustomError{Code: 500, Msg: "server error"}
+
+	err := Do(
+		func() error { return customErr },
+		WithTimes(1),
+		WithConstantBackoff(1*time.Millisecond),
+	)
+
+	// Test errors.As functionality
+	var extractedErr *CustomError
+	if !errors.As(err, &extractedErr) {
+		t.Errorf("expected errors.As to extract CustomError")
+	}
+
+	if extractedErr.Code != 500 || extractedErr.Msg != "server error" {
+		t.Errorf("extracted error doesn't match original: %+v", extractedErr)
+	}
+}
+
+// TestExponentialBackoffCap tests that exponential backoff properly caps at maxInterval
+func TestExponentialBackoffCap(t *testing.T) {
+	backoff := &exponentialWithJitter{
+		interval:    1 * time.Second,
+		maxInterval: 8 * time.Second,
+		maxJitter:   0,
+	}
+
+	// Test that the cap works
+	interval := backoff.CalculateInterval(10) // 2^10 * 1s would be much larger than 8s
+	if interval > 8*time.Second {
+		t.Errorf("expected interval to be capped at 8s, got %v", interval)
+	}
+}
+
+// TestExponentialBackoffOverflow tests that exponential backoff handles large attempt values safely
+func TestExponentialBackoffOverflow(t *testing.T) {
+	backoff := &exponentialWithJitter{
+		interval:    1 * time.Second,
+		maxInterval: 10 * time.Second,
+		maxJitter:   0,
+	}
+
+	// This would cause overflow if not handled properly
+	interval := backoff.CalculateInterval(100)
+	if interval != 10*time.Second {
+		t.Errorf("expected interval to be capped at 10s for large attempt value, got %v", interval)
 	}
 }
